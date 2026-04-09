@@ -219,7 +219,14 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --depth=1 ${{ env.SUSFS_REPO }} susfs4ksu
         cd android-kernel
-        SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | grep -E "6\.1|61" | head -n 1)
+        SUSFS_PATCH=$(find ../susfs4ksu -type f -path "*/6.1/*" -name "susfs.patch" | head -n1)
+        if [ -z "$SUSFS_PATCH" ]; then
+          SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | head -n1)
+        fi
+        if [ -z "$SUSFS_PATCH" ]; then
+          echo "ERROR: SUSFS patch not found"
+          exit 1
+        fi
         cp "$SUSFS_PATCH" ./susfs.patch
         cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
         cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
