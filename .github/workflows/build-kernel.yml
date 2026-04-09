@@ -116,14 +116,15 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --depth=1 ${{ env.SUSFS_REPO }} susfs4ksu
+        git clone --depth=1 -b gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
         cd android-kernel
-        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./susfs.patch
-        SUSFS_C=$(find ../susfs4ksu -type f -name "susfs.c" | head -n 1)
-        SUSFS_H=$(find ../susfs4ksu -type f -name "susfs.h" | head -n 1)
-        cp "$SUSFS_C" fs/
-        cp "$SUSFS_H" include/linux/
-        patch -p1 < susfs.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
+        cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+        cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+        patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
+        cd KernelSU
+        cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+        patch -p1 < 10_enable_susfs_for_ksu.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
 
     - name: Configure Kernel
       run: |
