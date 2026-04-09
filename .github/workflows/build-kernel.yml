@@ -34,27 +34,9 @@ jobs:
             echo "$CONFIG=$VAL" >> $GITHUB_ENV
         done
 
-    - name: Remove unused packages
-      if: env.REMOVE_UNUSED_PACKAGES == 'true'
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: true
-        android: false
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: false
-
-    - name: Set swap to 10G
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 10
-
     - name: Setup build environment
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
-        echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
         sudo apt-get update
         sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush fontconfig schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libncurses-dev libx11-dev lib32z1-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
@@ -72,26 +54,24 @@ jobs:
         git clone --recursive ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
         cd android-kernel
         
-        # 核心逻辑：自动清理所有 Kconfig 中指向不存在路径的引用
-        echo "Starting Kconfig repair..."
+        # 优化后的 Kconfig 修复逻辑：跳过包含 $ 变量的路径，只清理确切不存在的物理路径
+        echo "Starting smart Kconfig repair..."
         find . -name "Kconfig" | while read -r kfile; do
-            # 查找所有以 source 开头的行，并提取路径
             grep -E '^\s*source\s+"' "$kfile" | while read -r line; do
-                # 提取双引号内的路径
                 rel_path=$(echo "$line" | sed 's/.*source "\(.*\)".*/\1/')
-                # 检查文件是否存在
+                # 如果路径里包含 $ 或者是通配符，跳过，不处理
+                if [[ "$rel_path" == *"\$"* ]] || [[ "$rel_path" == *"*"* ]]; then
+                    continue
+                fi
+                # 如果是普通路径且文件确实不存在，则删除该行
                 if [ ! -f "$rel_path" ]; then
-                    echo "Removing broken reference in $kfile: $rel_path"
-                    # 转义路径中的斜杠以便 sed 使用
-                    escaped_path=$(echo "$line" | sed 's/[[*^$/\\]/\\&/g')
-                    sed -i "\|$escaped_path|d" "$kfile"
+                    echo "Removing confirmed broken reference in $kfile: $rel_path"
+                    escaped_line=$(echo "$line" | sed 's/[[*^$/\\]/\\&/g')
+                    sed -i "\|$escaped_line|d" "$kfile"
                 fi
             done
         done
         echo "Kconfig repair finished."
-        
-        # 特殊清理：删除可能导致错误的 localversion
-        [ -f localversion ] && sed -i 's/+//g' localversion
 
     - name: Setup SukiSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -106,15 +86,12 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --depth=1 -b gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
         cd android-kernel
-        
-        # 强行注入 fs/namespace.c 解决补丁冲突
+        # 注入内核核心代码解决冲突
         sed -i '30i #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/susfs_def.h>\nextern bool susfs_is_current_ksu_domain(void);\nextern bool susfs_is_sdcard_android_data_decrypted __read_mostly;\n#define CL_COPY_MNT_NS BIT(25)\nstatic DEFINE_IDA(susfs_mnt_id_ida);\nstatic DEFINE_IDA(susfs_mnt_group_ida);\n#endif' fs/namespace.c
-        
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
         cp -r ../susfs4ksu/kernel_patches/fs/* fs/
         cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
         patch -p1 --ignore-whitespace < 50_add_susfs_in_gki-android14-6.1.patch || true
-        
         cd KernelSU
         cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
         patch -p1 < 10_enable_susfs_for_ksu.patch || true
@@ -122,10 +99,8 @@ jobs:
     - name: Configure Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 强制启用 Kprobes
         echo "CONFIG_KPROBES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "CONFIG_KPROBE_EVENTS=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        # 写入 SUSFS 配置
         cat <<EOF >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         CONFIG_KSU=y
         CONFIG_SUSFS=y
@@ -152,7 +127,6 @@ jobs:
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
-        # 使用全套 LLVM 工具链以保证兼容性
         make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} LLVM=1 LLVM_IAS=1 ${{ env.KERNEL_CONFIG }}
         make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} LLVM=1 LLVM_IAS=1
 
