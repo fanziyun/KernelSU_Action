@@ -95,6 +95,7 @@ jobs:
           echo "LOCALVERSION=" >> $GITHUB_ENV
         fi
         sed -i '/kernelFwUpdate/d' android-kernel/drivers/base/Kconfig
+        sed -i '/touchpanel_notify/d' android-kernel/drivers/base/Kconfig
 
     - name: Setup SukiSU
       if: env.ENABLE_KERNELSU == 'true'
