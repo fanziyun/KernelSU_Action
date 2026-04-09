@@ -219,21 +219,30 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --depth=1 --branch gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
         cd android-kernel
-        SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | head -n1)
-        if [ -z "$SUSFS_PATCH" ]; then
-          echo "ERROR: SUSFS patch not found"
+        SUSFS_KERNEL_PATCH=$(find ../susfs4ksu/kernel_patches -type f -name "50_add_susfs_in_kernel-6.1*.patch" | head -n1)
+        if [ -z "$SUSFS_KERNEL_PATCH" ]; then
+          echo "ERROR: SUSFS kernel patch not found"
           exit 1
         fi
-        cp "$SUSFS_PATCH" ./susfs.patch
-        SUSFS_C=$(find ../susfs4ksu -type f -name "susfs.c" | head -n1)
-        SUSFS_H=$(find ../susfs4ksu -type f -name "susfs.h" | head -n1)
+        cp "$SUSFS_KERNEL_PATCH" ./susfs_kernel.patch
+        SUSFS_KSU_PATCH=$(find ../susfs4ksu/kernel_patches -type f -name "10_enable_susfs_for_ksu.patch" | head -n1)
+        if [ -z "$SUSFS_KSU_PATCH" ]; then
+          echo "ERROR: SUSFS KSU patch not found"
+          exit 1
+        fi
+        cp "$SUSFS_KSU_PATCH" ./KernelSU/
+        SUSFS_C=$(find ../susfs4ksu/kernel_patches -type f -name "susfs.c" | head -n1)
+        SUSFS_H=$(find ../susfs4ksu/kernel_patches -type f -name "susfs.h" | head -n1)
         if [ -z "$SUSFS_C" ] || [ -z "$SUSFS_H" ]; then
           echo "ERROR: susfs.c or susfs.h not found"
           exit 1
         fi
         cp "$SUSFS_C" fs/
         cp "$SUSFS_H" include/linux/
-        patch -p1 < susfs.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
+        cd KernelSU
+        patch -p1 < 10_enable_susfs_for_ksu.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
+        cd ..
+        patch -p1 < susfs_kernel.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
 
     - name: Setup Configuration for Kernel
       run: |
