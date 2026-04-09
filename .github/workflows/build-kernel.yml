@@ -56,7 +56,7 @@ jobs:
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
         echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
         sudo apt-get update
-        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libncurses-dev libx11-dev lib32z1-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush fontconfig schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libncurses-dev libx11-dev lib32z1-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
     - name: Download Clang
@@ -94,8 +94,12 @@ jobs:
         else
           echo "LOCALVERSION=" >> $GITHUB_ENV
         fi
-        sed -i '/kernelFwUpdate/d' android-kernel/drivers/base/Kconfig
-        sed -i '/touchpanel_notify/d' android-kernel/drivers/base/Kconfig
+        cd android-kernel
+        # 清理导致报错的不存在引用
+        sed -i '/kernelFwUpdate/d' drivers/base/Kconfig
+        sed -i '/touchpanel_notify/d' drivers/base/Kconfig
+        sed -i '/aw8697_haptic/d' drivers/misc/Kconfig
+        sed -i '/oplus_vibrator/d' drivers/misc/Kconfig
 
     - name: Setup SukiSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -111,6 +115,7 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --depth=1 -b gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
         cd android-kernel
+        # 针对 fs/namespace.c 的冲突修复
         sed -i '30i #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/susfs_def.h>\nextern bool susfs_is_current_ksu_domain(void);\nextern bool susfs_is_sdcard_android_data_decrypted __read_mostly;\n#define CL_COPY_MNT_NS BIT(25)\nstatic DEFINE_IDA(susfs_mnt_id_ida);\nstatic DEFINE_IDA(susfs_mnt_group_ida);\n#endif' fs/namespace.c
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
         cp -r ../susfs4ksu/kernel_patches/fs/* fs/
