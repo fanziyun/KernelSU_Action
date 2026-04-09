@@ -26,58 +26,102 @@ jobs:
             DISABLE-LTO ADD_OVERLAYFS_CONFIG DISABLE_CC_WERROR APPLY_KSU_PATCH
             USE_CUSTOM_ANYKERNEL3 CUSTOM_ANYKERNEL3_SOURCE CUSTOM_ANYKERNEL3_BRANCH
             ENABLE_CCACHE NEED_DTBO BUILD_BOOT_IMG SOURCE_BOOT_IMAGE
-            REMOVE_UNUSED_PACKAGES SUSFS_REPO SUKISU_SETUP_URL
+            KSU_EXPECTED_SIZE KSU_EXPECTED_HASH REMOVE_UNUSED_PACKAGES
+            SUSFS_REPO SUKISU_SETUP_URL
         )
         for CONFIG in "${CONFIG_LIST[@]}"; do
-            echo "$CONFIG=$(grep -w "$CONFIG" "$CONFIG_ENV" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            if [[ "$CONFIG" == "EXTRA_CMDS" || "$CONFIG" == "CUSTOM_CMDS" ]]; then
+                echo "$CONFIG=$(grep -w "$CONFIG" "$CONFIG_ENV" | head -n 1 | cut -d ":" -f 2)" >> $GITHUB_ENV
+            else
+                echo "$CONFIG=$(grep -w "$CONFIG" "$CONFIG_ENV" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            fi
         done
+
+    - name: Remove unused packages
+      if: env.REMOVE_UNUSED_PACKAGES == 'true'
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: false
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: false
+
+    - name: Set swap to 10G
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 10
 
     - name: Setup build environment
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
-        echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//')" >> $GITHUB_ENV
-        sudo apt-get update && sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libncurses-dev libx11-dev lib32z1-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3
+        echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
+        sudo apt-get update
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libncurses-dev libx11-dev lib32z1-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
     - name: Download Clang
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
-        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/${{ env.CLANG_BRANCH }}/clang-${{ env.CLANG_VERSION }}.tar.gz
-        tar -C clang-aosp/ -zxvf clang-${{ env.CLANG_VERSION }}.tar.gz
+        if [ ${{ env.USE_CUSTOM_CLANG }} = true ]; then
+            if [[ ${{ env.CUSTOM_CLANG_SOURCE }} =~ git ]]; then
+                git clone ${{ env.CUSTOM_CLANG_SOURCE }} -b ${{ env.CUSTOM_CLANG_BRANCH }} clang-aosp --depth=1
+            else
+                wget -O clang.tar.gz ${{ env.CUSTOM_CLANG_SOURCE }}
+                mkdir clang-aosp && tar -C clang-aosp/ -zxvf clang.tar.gz
+            fi
+        else
+            mkdir clang-aosp
+            wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/${{ env.CLANG_BRANCH }}/clang-${{ env.CLANG_VERSION }}.tar.gz
+            tar -C clang-aosp/ -zxvf clang-${{ env.CLANG_VERSION }}.tar.gz
+        fi
 
     - name: Download Gcc
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir gcc-64
-        wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
-        tar -C gcc-64/ -zxvf gcc-aarch64.tar.gz
-        echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-" >> $GITHUB_ENV
+        if [ ${{ env.ENABLE_GCC_ARM64 }} = true ]; then
+            if [ ${{ env.USE_CUSTOM_GCC_64 }} = true ]; then
+                git clone ${{ env.CUSTOM_GCC_64_SOURCE }} -b ${{ env.CUSTOM_GCC_64_BRANCH }} gcc-64 --depth=1
+                echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/${{ env.CUSTOM_GCC_64_BIN }}" >> $GITHUB_ENV
+            else
+                mkdir gcc-64
+                wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+                tar -C gcc-64/ -zxvf gcc-aarch64.tar.gz
+                echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-" >> $GITHUB_ENV
+            fi
+        fi
 
     - name: Download Source
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --recursive ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+        if [[ ${{ env.ADD_LOCALVERSION_TO_FILENAME }} == 'true' ]]; then
+          echo "LOCALVERSION=$(cat android-kernel/localversion)" >> $GITHUB_ENV
+        else
+          echo "LOCALVERSION=" >> $GITHUB_ENV
+        fi
+        sed -i '/kernelFwUpdate/d' android-kernel/drivers/base/Kconfig
 
-    - name: Setup KernelSU
+    - name: Setup SukiSU
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         curl -LSs "${{ env.SUKISU_SETUP_URL }}" | bash -s "v${{ env.KERNELSU_TAG }}" || curl -LSs "${{ env.SUKISU_SETUP_URL }}" | bash -s main
-        echo "UPLOADNAME=-SukiSU" >> $GITHUB_ENV
+        KSU_VERSION=$(cd KernelSU && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
+        echo "UPLOADNAME=-SukiSU_$KSU_VERSION" >> $GITHUB_ENV
 
     - name: Fetch and Apply SUSFS
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+        git clone --depth=1 ${{ env.SUSFS_REPO }} susfs4ksu
         cd android-kernel
-        SUSFS_PATCH=$(find ../susfs4ksu/ -name "*susfs.patch" | grep -iE "6\.1|61" | head -n 1)
-        SUSFS_C=$(find ../susfs4ksu/ -name "susfs.c" | head -n 1)
-        SUSFS_H=$(find ../susfs4ksu/ -name "susfs.h" | head -n 1)
-        if [ -z "$SUSFS_PATCH" ] || [ -z "$SUSFS_C" ] || [ -z "$SUSFS_H" ]; then
-          exit 1
-        fi
+        SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | grep -iE "6\.1|61" | head -n 1)
+        SUSFS_C=$(find ../susfs4ksu -type f -name "susfs.c" | head -n 1)
+        SUSFS_H=$(find ../susfs4ksu -type f -name "susfs.h" | head -n 1)
+        if [ -z "$SUSFS_PATCH" ]; then echo "Error: SUSFS Patch not found for 6.1"; exit 1; fi
         cp "$SUSFS_PATCH" ./susfs.patch
         cp "$SUSFS_C" fs/
         cp "$SUSFS_H" include/linux/
@@ -116,9 +160,12 @@ jobs:
     - name: Pack AnyKernel3
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
+        if [ ${{ env.USE_CUSTOM_ANYKERNEL3 }} = true ]; then
+            git clone ${{ env.CUSTOM_ANYKERNEL3_SOURCE }} -b ${{ env.CUSTOM_ANYKERNEL3_BRANCH }} AnyKernel3 --depth=1
+        else
+            git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
+        fi
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
 
     - name: Upload
