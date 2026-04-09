@@ -89,12 +89,10 @@ jobs:
     - name: Integrate SUSFS
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.15
         cp susfs4ksu/kernel_patches/fs/susfs.c fs/
         cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
-        cp susfs4ksu/kernel_patches/fs/Kconfig.susfs fs/Kconfig
-        cp susfs4ksu/kernel_patches/fs/Makefile.susfs fs/Makefile
-        patch -p1 < susfs4ksu/kernel_patches/5.15/6.1/0001-susfs-v1.5.1-for-kernel-6.1.patch
+        patch -p1 < susfs4ksu/kernel_patches/5.15/0001-susfs-v1.5.5-for-kernel-5.15.patch
         echo "CONFIG_SUSFS=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
     - name: Build Kernel
