@@ -219,7 +219,8 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone --depth=1 ${{ env.SUSFS_REPO }} susfs4ksu
         cd android-kernel
-        cp ../susfs4ksu/kernel_patches/5.15/susfs.patch .
+        SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | grep -E "5\.15|515|5015" | head -n 1)
+        cp "$SUSFS_PATCH" ./susfs.patch
         cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
         cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
         patch -p1 < susfs.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
