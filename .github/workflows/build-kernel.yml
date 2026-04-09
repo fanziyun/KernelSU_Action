@@ -217,9 +217,9 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --depth=1 ${{ env.SUSFS_REPO }} susfs4ksu
+        git clone --depth=1 https://github.com/WildKernels/GKI_KernelSU_SUSFS.git susfs4ksu
         cd android-kernel
-        SUSFS_PATCH=$(find ../susfs4ksu -type f -path "*/6.1/*" -name "susfs.patch" | head -n1)
+        SUSFS_PATCH=$(find ../susfs4ksu -type f -name "*.patch" | grep -E "6\.1|61" | head -n1)
         if [ -z "$SUSFS_PATCH" ]; then
           SUSFS_PATCH=$(find ../susfs4ksu -type f -name "susfs.patch" | head -n1)
         fi
@@ -228,8 +228,14 @@ jobs:
           exit 1
         fi
         cp "$SUSFS_PATCH" ./susfs.patch
-        cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
-        cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+        SUSFS_C=$(find ../susfs4ksu -type f -name "susfs.c" | head -n1)
+        SUSFS_H=$(find ../susfs4ksu -type f -name "susfs.h" | head -n1)
+        if [ -z "$SUSFS_C" ] || [ -z "$SUSFS_H" ]; then
+          echo "ERROR: susfs.c or susfs.h not found"
+          exit 1
+        fi
+        cp "$SUSFS_C" fs/
+        cp "$SUSFS_H" include/linux/
         patch -p1 < susfs.patch || { find . -name "*.rej" -print0 | xargs -0 cat; exit 1; }
 
     - name: Setup Configuration for Kernel
