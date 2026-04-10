@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build Kernel SM8650
 on:
   workflow_dispatch:
 
@@ -12,6 +12,7 @@ jobs:
       CCACHE_HARDLINK: "true"
     steps:
     - uses: actions/checkout@v4
+
     - name: Prepare Configuration
       run: |
         CONFIG_ENV=$(grep -w "CONFIG_ENV" config.env | head -n 1 | cut -d "=" -f 2)
@@ -34,6 +35,17 @@ jobs:
             echo "$CONFIG=$VAL" >> $GITHUB_ENV
         done
 
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: false
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: false
+
     - name: Setup build environment
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -51,27 +63,28 @@ jobs:
     - name: Download Source
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --recursive ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
-        cd android-kernel
+        # 1. 下载主内核
+        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
         
-        # 优化后的 Kconfig 修复逻辑：跳过包含 $ 变量的路径，只清理确切不存在的物理路径
-        echo "Starting smart Kconfig repair..."
+        # 2. 拉取模块仓库到 oplus 目录
+        cd android-kernel
+        git clone https://github.com/crdroidandroid/android_kernel_oneplus_sm8650-modules.git -b ${{ env.KERNEL_SOURCE_BRANCH }} oplus --depth=1
+        
+        # 3. 路径对齐：建立必要的符号链接让 Kconfig 能找到驱动
+        ln -sf $(pwd)/oplus/drivers/pa drivers/pa
+        ln -sf $(pwd)/oplus/drivers/qcom drivers/qcom_modules
+        
+        # 4. 修复 Kconfig (跳过变量引用，清理空路径)
         find . -name "Kconfig" | while read -r kfile; do
             grep -E '^\s*source\s+"' "$kfile" | while read -r line; do
                 rel_path=$(echo "$line" | sed 's/.*source "\(.*\)".*/\1/')
-                # 如果路径里包含 $ 或者是通配符，跳过，不处理
-                if [[ "$rel_path" == *"\$"* ]] || [[ "$rel_path" == *"*"* ]]; then
-                    continue
-                fi
-                # 如果是普通路径且文件确实不存在，则删除该行
+                [[ "$rel_path" == *"\$"* ]] && continue
                 if [ ! -f "$rel_path" ]; then
-                    echo "Removing confirmed broken reference in $kfile: $rel_path"
                     escaped_line=$(echo "$line" | sed 's/[[*^$/\\]/\\&/g')
                     sed -i "\|$escaped_line|d" "$kfile"
                 fi
             done
         done
-        echo "Kconfig repair finished."
 
     - name: Setup SukiSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -99,9 +112,10 @@ jobs:
     - name: Configure Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "CONFIG_KPROBES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_KPROBE_EVENTS=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        cat <<EOF >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        # 强制注入 KernelSU 必需配置
+        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        cat <<EOF >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         CONFIG_KSU=y
         CONFIG_SUSFS=y
         CONFIG_KSU_SUSFS=y
@@ -127,20 +141,22 @@ jobs:
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} LLVM=1 LLVM_IAS=1 ${{ env.KERNEL_CONFIG }}
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} LLVM=1 LLVM_IAS=1
+        
+        # SM8650 必须开启全套 LLVM 支持
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ env.KERNEL_CONFIG }}
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
     - name: Pack
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        cp android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+        cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-SM8650-${{ env.BUILD_TIME }}
         path: |
-          kernel_workspace/android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }}
+          kernel_workspace/android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }}
           kernel_workspace/AnyKernel3/*
